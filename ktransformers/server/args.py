@@ -22,6 +22,10 @@ class ArgumentParser:
             "--device", type=str, default=self.cfg.model_device, help="Warning: Abandoning this parameter"
         )
         parser.add_argument("--architectures", type=str, default=self.cfg.model_name)
+
+        parser.add_argument("--tp", type=int, default=1)
+        parser.add_argument("--q4_gguf_path", type=str, default=None)
+
         parser.add_argument("--gguf_path", type=str, default=self.cfg.gguf_path)
         parser.add_argument("--optimize_config_path", default=None, type=str, required=False)
         parser.add_argument("--cpu_infer", type=int, default=self.cfg.cpu_infer)

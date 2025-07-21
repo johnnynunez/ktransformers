@@ -14,7 +14,15 @@ Copyright (c) 2024 by KVCache.AI, All Rights Reserved.
 import ctypes
 import torch
 from torch import Tensor, nn
-if not torch.xpu.is_available():
+
+try:
+    import torch_npu
+
+    use_torch_npu = torch_npu.npu.is_available()
+except:
+    use_torch_npu = False
+
+if not torch.xpu.is_available() and not use_torch_npu:
     import KTransformersOps
     import vLLMMarlin
 from ktransformers.util.custom_loader import GGUFLoader, SafeTensorLoader

@@ -16,6 +16,7 @@ from ktransformers.util.custom_loader import GGUFLoader, ModelLoaderFactory
 from ktransformers.util.utils import set_module, load_weights
 import itertools
 import copy
+from ktransformers.util import utils
 
 def inject(module, local_optimization_dict, model_config:AutoConfig ,gguf_loader:GGUFLoader, prefix=''):
     for name, child in module._modules.items():
@@ -114,7 +115,7 @@ def translate_model_config(model_config: PretrainedConfig):
     return model_config
 
 
-def optimize_and_load_gguf(module: nn.Module, rule_file: str, gguf_path: str, model_config: PretrainedConfig, default_device: str = "cuda:0"):
+def optimize_and_load_gguf(module: nn.Module, rule_file: str, gguf_path: str, model_config: PretrainedConfig, default_device: str = "cuda:0", q4_gguf_path=""):
     with open(rule_file, 'r', encoding='utf-8') as f:
         rule_list = yaml.load(f.read(), Loader=yaml.FullLoader)
     
@@ -123,15 +124,29 @@ def optimize_and_load_gguf(module: nn.Module, rule_file: str, gguf_path: str, mo
     
     model_config = translate_model_config(model_config)
 
-    weights_loader = ModelLoaderFactory.create_loader(gguf_path)
-    with torch.device("meta"):
-        inject(module, optimize_config, model_config, weights_loader)
-    # pre load lm_head because its big inter result
-    load_weights(module.lm_head, weights_loader, "lm_head.", device=default_device)
-    load_weights(module, weights_loader, device=default_device)
-    module.gguf_loader = weights_loader
+    if q4_gguf_path:
+        q4_gguf_loader = GGUFLoader(q4_gguf_path)
+        utils.Q4_GGUF_LODER = q4_gguf_loader
+        gguf_loader = GGUFLoader(gguf_path, getattr(model_config, "quantize", None))
+        with torch.device("meta"):
+            inject(module, optimize_config, model_config, gguf_loader)
+        # pre load lm_head because its big inter result
+        load_weights(module.lm_head, gguf_loader, "lm_head.")
+        load_weights(module, gguf_loader)
+        module.gguf_loader = gguf_loader
+
+    else:
+        weights_loader = ModelLoaderFactory.create_loader(gguf_path)
+        with torch.device("meta"):
+            inject(module, optimize_config, model_config, weights_loader)
+        # pre load lm_head because its big inter result
+        load_weights(module.lm_head, weights_loader, "lm_head.", device=default_device)
+        load_weights(module, weights_loader, device=default_device)
+        module.gguf_loader = weights_loader
     del_meta(module)
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     elif torch.xpu.is_available():
         torch.xpu.empty_cache()
+    else:
+        torch.cuda.empty_cache()

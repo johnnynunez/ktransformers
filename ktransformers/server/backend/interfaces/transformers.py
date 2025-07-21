@@ -32,6 +32,20 @@ from ktransformers.server.config.log import logger
 from ..args import ConfigArgs, default_args
 from ktransformers.operators.flashinfer_wrapper import flashinfer_enabled, MLAWrapperSingleton
 
+
+
+try:
+    import torch_npu
+    from ktransformers.util import utils
+
+    use_torch_npu = torch_npu.npu.is_available()
+except:
+    use_torch_npu = False
+
+
+import torch.distributed as dist
+
+
 # This TextStreamer is a modified version from https://github.com/huggingface/transformers/blob/main/src/transformers/generation/streamers.py
 class TextStreamer:
 
@@ -191,11 +205,19 @@ class TransformersInterface(BackendInterfaceBase):
         #     input_ids = self.tokenizer.apply_chat_template(
         #         new_messages, return_tensors="pt", add_generation_prompt=True
         #     ).to(self.args.device)
-        input_str: str = self.tokenizer.apply_chat_template(new_messages,tokenize=False,add_generation_prompt=True)
-        # drop <think> token in chat template
-        if input_str.endswith('<think>\n'):
-            input_str = input_str[:-len('<think>\n')]
-        input_ids = self.tokenizer.encode(input_str, return_tensors="pt").to(self.args.device)
+
+        if not use_torch_npu:
+            input_str: str = self.tokenizer.apply_chat_template(new_messages,tokenize=False,add_generation_prompt=True)
+            # drop <think> token in chat template
+            if input_str.endswith('<think>\n'):
+                input_str = input_str[:-len('<think>\n')]
+            input_ids = self.tokenizer.encode(input_str, return_tensors="pt").to(self.args.device)
+        else:
+            logger.debug(f"new_messages: {new_messages}")
+            input_ids = self.tokenizer.apply_chat_template(
+                new_messages, add_generation_prompt=True, return_tensors="pt"
+            ) 
+
         if (self.last_request_id is not None) and self.last_request_id == thread_id:
             x = self.generated_ids[:,:self.seq_length]
             y = input_ids[:,:self.seq_length]
@@ -212,6 +234,8 @@ class TransformersInterface(BackendInterfaceBase):
     def append_new_tokens(self, new_tokens: int) -> Optional[str]:
         self.generated_ids[0, self.seq_length] = new_tokens
         self.seq_length += 1
+        if use_torch_npu:
+            self.cache.position[0] = self.seq_length
         return self.streamer.put(new_tokens)
 
     @staticmethod
@@ -273,14 +297,21 @@ class TransformersInterface(BackendInterfaceBase):
             top_p = self.model.generation_config.top_p
         if top_p == 0:
             top_p = 0.0001
-        generation_config, model_kwargs = self.model._prepare_generation_config(
-            None, max_length=self.args.max_new_tokens,
-            do_sample=True, 
-            top_k=self.args.top_k, 
-            top_p=top_p, 
-            temperature=temperature,
-            repetition_penalty=self.args.repetition_penalty # change this to modify generate config
-        )
+        
+        if use_torch_npu:
+            generation_config, model_kwargs = self.model._prepare_generation_config(
+                None, do_sample=True,
+                top_p=top_p, temperature=temperature
+            )
+        else:
+            generation_config, model_kwargs = self.model._prepare_generation_config(
+                None, max_length=self.args.max_new_tokens,
+                do_sample=True, 
+                top_k=self.args.top_k, 
+                top_p=top_p, 
+                temperature=temperature,
+                repetition_penalty=self.args.repetition_penalty # change this to modify generate config
+            )
         self.inputs = inputs
 
         self.logits_warper = self.tf_logits_warper(generation_config)
@@ -372,7 +403,10 @@ class TransformersInterface(BackendInterfaceBase):
         cache_position = torch.arange(former_seq_length, self.seq_length, device=self.args.device)
         self.generated_ids[:, cache_position] = input_ids.to(self.args.device).to(torch.int)
 
-        device = input_ids.device
+        if use_torch_npu:
+            device = self.args.device
+        else:
+            device = input_ids.device
         if not (type(self) is TransformersInterface):
             input_ids = input_ids.to("cpu")
         inputs_embeds = self.model.model.embed_tokens(input_ids).to(device)
@@ -420,7 +454,12 @@ class TransformersInterface(BackendInterfaceBase):
         else:   # for's else, if output get max new tokens
             yield self.streamer.end(), None
             yield "", "length"
-        
+    
+        if use_torch_npu and self.args.use_cuda_graph:
+            utils._USE_NPU_GRAPH = False
+            from ktransformers.util.npu_graph_runner import get_or_create_runner
+            npu_graph_runner = get_or_create_runner(self.args.device)
+            npu_graph_runner.destroy()
         
 
     def check_is_new(self, thread_id: str):
@@ -436,7 +475,87 @@ class TransformersInterface(BackendInterfaceBase):
                 self.last_request_id = thread_id
                 return True
 
+
+    async def inference_npu(self, local_messages, thread_id: str, temperature: Optional[float] = None, top_p: Optional[float] = None):
+        self.streamer.reset()
+        self.profiler.create_and_start_timer("tokenize")
+        rank = torch.distributed.get_rank()
+        tp_size = utils.get_tensor_parallel_size()
+        world_size = torch.distributed.get_world_size()
+        if isinstance(local_messages, List):
+            input_ids = self.format_and_tokenize_input_ids(thread_id, local_messages)
+        elif isinstance(local_messages, str):
+            #local_messages = local_messages[0]['content']
+            input_ids = self.tokenize_prompt(local_messages)
+            #input_ids = torch.tensor([[6366]], device=input_ids.device)
+        else:
+            raise ValueError("local_messages should be List or str")
+
+        if tp_size == world_size and tp_size > 1:
+            torch.distributed.barrier()
+            input_size = torch.tensor([input_ids.size(1)], dtype=torch.int64, device=self.args.device)
+            all_input_sizes = [torch.zeros_like(input_size) for _ in range(world_size)]
+            dist.all_gather(all_input_sizes, input_size)
+
+            max_input_size = max([size.item() for size in all_input_sizes])
+            padded_input_ids = torch.zeros(1, max_input_size, dtype=input_ids.dtype, device=self.args.device)
+            padded_input_ids[0, :input_ids.size(1)] = input_ids[0]
+
+            all_padded_inputs = [torch.zeros_like(padded_input_ids) for _ in range(world_size)]
+            dist.all_gather(all_padded_inputs, padded_input_ids)
+
+            original_size = all_input_sizes[0].item()
+            input_ids = all_padded_inputs[0][:, :original_size]
+        
+        if Config().user_force_think:
+            token_thinks = torch.tensor([self.tokenizer.encode("<think>\n",add_special_tokens=False)],device=input_ids.device)
+            if not torch.equal(input_ids[0, -token_thinks.shape[-1]:], token_thinks[-1]):
+                input_ids = torch.cat(
+                    [input_ids, token_thinks], dim=1
+                )
+
+        self.profiler.pause_timer("tokenize")
+
+        self.profiler.create_and_start_timer("prefill")
+
+        if Config().user_force_think:
+            think = '<think>\n'
+            if tp_size == world_size and rank != 0:
+                pass
+            else:
+                print(think, end="",flush=True)
+            yield think, None
+        
+        for t in self.prefill(input_ids, self.check_is_new(thread_id), temperature, top_p):
+            # output think token after prefill done
+            if t is not None:
+                print(t, end="",flush=True)
+                yield t, None
+        self.profiler.pause_timer("prefill")
+
+        self.profiler.create_and_start_timer("decode")
+        for t, finish_reason in self.generate():
+            if t is not None:
+                if tp_size == world_size and rank != 0:
+                    pass
+                else:
+                    print(t, end="",flush=True)
+                yield t, finish_reason
+
+        if tp_size == world_size and rank != 0:
+            pass
+        else:
+            self.profiler.pause_timer("decode")
+            self.report_last_time_performance()
+
     async def inference(self, local_messages, thread_id: str, temperature: Optional[float] = None, top_p: Optional[float] = None, max_tokens: Optional[float] = None, max_completion_tokens: Optional[float] = None):
+
+        if use_torch_npu:
+            async for tok in self.inference_npu(local_messages, thread_id, temperature, top_p):
+                yield tok
+            return
+
+
         self.streamer.reset()
         self.profiler.create_and_start_timer("tokenize")
         if isinstance(local_messages, List):

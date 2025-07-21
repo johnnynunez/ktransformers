@@ -5,6 +5,7 @@
 
 #ifdef __aarch64__
 #define llamafile_mixmul llamafile_mixmul_arm80
+#define iqk_mul_mat iqk_mul_mat_arm80
 #include "tinyblas_cpu_mixmul.inc"
 
 /**

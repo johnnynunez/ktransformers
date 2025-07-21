@@ -12,6 +12,8 @@ from safetensors.torch import save_file
 import re
 from collections import defaultdict
 
+SKIP_MTP = True
+
 def read_safetensor_keys_from_folder(folder_path)->dict:
     """    
     :param folder_path: folder path
@@ -36,7 +38,7 @@ def read_safetensor_keys_from_folder(folder_path)->dict:
                 try:
                     with safe_open(file_path, framework="pt") as f:
                         for key in f.keys():
-                            if "model.layers.61" in key:
+                            if SKIP_MTP and "model.layers.61" in key:
                                 # skip MTP layer
                                 continue
                             # try:
@@ -92,6 +94,28 @@ def combine_tensor_sources(safetensor_path:str, gguf_path:str):
         else:
             target_tensor_map[key] = safetensor_tensor_file_map[key]
     
+    return target_tensor_map, gguf_loader
+
+def combine_w8a8_tensor_sources(safetensor_path: str, gguf_path: str):
+    gguf_loader = GGUFLoader(gguf_path)
+    gguf_tensor_file_map = gguf_loader.tensor_file_map
+    safetensor_tensor_file_map = read_safetensor_keys_from_folder(safetensor_path)
+
+    # build a map for the key to the tensor
+    # according to the key, we can get the tensor from the file
+
+    target_tensor_map = {}
+    for key in safetensor_tensor_file_map.keys():
+        # for all experts, we use the gguf tensor
+        if ".mlp.experts." in key and "weight_scale" not in key and "weight_offset" not in key:
+            key = '.'.join(key.split('.')[:5] + key.split('.')[-2:])
+            translated_key = translate_name(key)
+            target_tensor_map[key] = gguf_tensor_file_map[translated_key]
+        elif ".mlp.experts." in key and ("weight_scale" not in key or "weight_offset" not in key):
+            continue
+        else:
+            target_tensor_map[key] = safetensor_tensor_file_map[key]
+
     return target_tensor_map, gguf_loader
 
 def write_combined_tensor(target_tensor_map: dict, output_path: str, gguf_loader: GGUFLoader):
@@ -193,6 +217,7 @@ def main():
     parser.add_argument("--safetensor_path", type=str, help="Path to the Safetensor file", default="/mnt/data/model/DeepSeek-V3")
     parser.add_argument("--gguf_path", type=str, help="Path to the GGUF file", default="/mnt/data/model/DeepseekV3-q4km-gguf")
     parser.add_argument("--output_path", type=str, help="Path to the output file", default="/mnt/data/model/ktrans-safetensors/DeepSeek-V3-q4km-fp8")
+    parser.add_argument("--safetensors_format", type=str, help="Safetensors format", default="fp8")
     
     # print all the arguments
     print("All the arguments:")
@@ -204,8 +229,18 @@ def main():
     safetensor_path = args.safetensor_path
     gguf_path = args.gguf_path
     output_path = args.output_path
+    safetensors_format = args.safetensors_format
     
-    target_tensor_map, gguf_loader = combine_tensor_sources(safetensor_path, gguf_path)
+    match safetensors_format:
+        case "w8a8":
+            global SKIP_MTP
+            SKIP_MTP = False
+            target_tensor_map, gguf_loader = combine_w8a8_tensor_sources(safetensor_path, gguf_path)
+        case "fp8":
+            target_tensor_map, gguf_loader = combine_tensor_sources(safetensor_path, gguf_path)
+        case _:
+            raise ValueError(f"Unsupported safetensors format: {safetensor_path}")
+        
     write_combined_tensor(target_tensor_map, output_path, gguf_loader)
     
     return

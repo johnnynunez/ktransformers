@@ -9,13 +9,28 @@ project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 from fastapi.middleware.cors import CORSMiddleware
 from ktransformers.server.args import ArgumentParser
 from ktransformers.server.config.config import Config
-from ktransformers.server.utils.create_interface import create_interface, GlobalInterface
+from ktransformers.server.utils.create_interface import create_interface, GlobalInterface, get_thread_context_manager
 from fastapi.openapi.utils import get_openapi
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ktransformers.server.api import router, post_db_creation_operations
 from ktransformers.server.utils.sql_utils import Base, SQLUtil
 from ktransformers.server.config.log import logger
+
+import asyncio
+from uuid import uuid4
+import torch.distributed
+import subprocess
+import tempfile
+import atexit
+
+try:
+    import torch_npu
+    from ktransformers.util import utils
+
+    use_torch_npu = torch_npu.npu.is_available()
+except:
+    use_torch_npu = False
 
 
 def mount_app_routes(mount_app: FastAPI):
@@ -100,6 +115,77 @@ def custom_openapi(app):
     return app.openapi_schema
 
 
+def main_npu():
+    torch.npu.config.allow_internal_format = False
+    cfg = Config()
+
+    arg_parser = ArgumentParser(cfg)
+
+    args = arg_parser.parse_args()
+    utils.USE_NPU_GRAPH = args.use_cuda_graph
+    new_chunk_size = min(max(args.chunk_size, 512), utils._MAX_CHUNK_SIZE)
+    if new_chunk_size != args.chunk_size:
+        args.chunk_size = new_chunk_size
+        print(f'[WARN] Chunk size reset to legal value between [512, {utils._MAX_CHUNK_SIZE}] which is {args.chunk_size}.')
+
+    if args.backend_type == "balance_serve":
+        import pickle
+        def cleanup():
+            if sched_process.poll() is None:
+                sched_process.terminate()
+
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            pickle.dump(args, temp_file)
+            temp_file_path = temp_file.name
+        current_file = __file__
+        target_file = os.path.join(os.path.dirname(current_file), "balance_serve", "sched_rpc.py")
+        target_file = os.path.normpath(target_file)
+        log_path = os.path.join(args.log_dir, "rpc.log")
+        log = open(log_path, "a") 
+        sched_process = subprocess.Popen(
+            ["python3", target_file, "--config", temp_file_path], 
+            stdout=log, 
+            stderr=log
+        )
+        print("sched_rpc started with PID:", sched_process.pid)
+        atexit.register(cleanup)
+    create_interface(config=cfg, default_args=cfg, input_args=args)
+    args.port += torch.distributed.get_rank()
+    tp_size = utils.get_tensor_parallel_size()
+    world_size = torch.distributed.get_world_size()
+    if tp_size == world_size and tp_size > 1:
+        if torch.distributed.get_rank() == 0:
+            app = create_app()
+            custom_openapi(app)
+            run_api(
+                app=app,
+                host=args.host,
+                port=args.port,
+                ssl_keyfile=args.ssl_keyfile,
+                ssl_certfile=args.ssl_certfile,
+            )
+        else:
+            while True:
+                try:
+                    context = get_thread_context_manager()
+                    id = str(uuid4())
+                    context.interface.sync_inference("", id)
+                except Exception as e:
+                    print(f"An error occurred: {e}")
+                finally:
+                    pass
+    else:
+        app = create_app()
+        custom_openapi(app)
+
+        run_api(
+            app=app,
+            host=args.host,
+            port=args.port,
+            ssl_keyfile=args.ssl_keyfile,
+            ssl_certfile=args.ssl_certfile,
+        )
+
 def main():
     cfg = Config()
 
@@ -119,4 +205,7 @@ def main():
     )
 
 if __name__ == "__main__":
-    main()
+    if use_torch_npu:
+        main_npu()
+    else:
+        main()

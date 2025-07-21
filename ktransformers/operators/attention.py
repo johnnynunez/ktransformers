@@ -27,8 +27,12 @@ try:
     from flash_attn import flash_attn_func
 except:
     pass
-from ktransformers.operators.triton_attention import decode_attention_fwd_grouped 
-from ktransformers.operators.triton_attention_prefill import context_attention_fwd
+try:
+    from ktransformers.operators.triton_attention import decode_attention_fwd_grouped 
+    from ktransformers.operators.triton_attention_prefill import context_attention_fwd
+except:
+    Warning("triton not found, if you are using npu, ignore this.")
+
 import os
 from ktransformers.operators.flashinfer_wrapper import flashinfer_enabled
 if flashinfer_enabled:

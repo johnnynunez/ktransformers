@@ -5,7 +5,11 @@ Version      : 0.2.3
 '''
 import torch
 import os
-from ktransformers.operators.triton_attention import decode_attention_fwd_grouped
+
+try:
+    from ktransformers.operators.triton_attention import decode_attention_fwd_grouped
+except:
+	Warning("triton not found, if you are using npu, ignore this.")
 
 flashinfer_enabled = False
 

@@ -673,10 +673,29 @@ if not torch.xpu.is_available() and not KTRANSFORMERS_BUILD_NPU:
         ext_modules.append(
             CMakeExtension("balance_serve", os.fspath(Path("").resolve()/ "csrc"/ "balance_serve"))
         )
+
+    setup(
+        name=VersionInfo.PACKAGE_NAME,
+        version=VersionInfo().get_package_version(),
+        install_requires=triton_dep,
+        cmdclass={"bdist_wheel":BuildWheelsCommand ,"build_ext": CMakeBuild},
+        ext_modules=ext_modules
+    )
+
+
+
 elif torch.xpu.is_available():
     ext_modules = [
         CMakeExtension("cpuinfer_ext", os.fspath(Path("").resolve() / "csrc" / "ktransformers_ext")),
     ]
+    setup(
+        name=VersionInfo.PACKAGE_NAME,
+        version=VersionInfo().get_package_version(),
+        install_requires=triton_dep,
+        cmdclass={"bdist_wheel":BuildWheelsCommand ,"build_ext": CMakeBuild},
+        ext_modules=ext_modules
+    )
+
 elif KTRANSFORMERS_BUILD_NPU:
     ext_modules = [
         CMakeExtension("cpuinfer_ext", os.fspath(Path("").resolve() / "csrc" / "ktransformers_ext")),
@@ -687,11 +706,10 @@ elif KTRANSFORMERS_BUILD_NPU:
             CMakeExtension("balance_serve", os.fspath(Path("").resolve()/ "csrc"/ "balance_serve"))
         )
 
+    setup(
+        name=VersionInfo.PACKAGE_NAME,
+        version=VersionInfo().get_package_version(),
+        cmdclass={"bdist_wheel":BuildWheelsCommand ,"build_ext": CMakeBuild},
+        ext_modules=ext_modules
+    )
 
-setup(
-    name=VersionInfo.PACKAGE_NAME,
-    version=VersionInfo().get_package_version(),
-    install_requires=triton_dep,
-    cmdclass={"bdist_wheel":BuildWheelsCommand ,"build_ext": CMakeBuild},
-    ext_modules=ext_modules
-)

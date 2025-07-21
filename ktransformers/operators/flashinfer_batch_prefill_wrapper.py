@@ -1,5 +1,8 @@
 import torch
-import flashinfer
+try:
+    import flashinfer
+except:
+	Warning("flashinfer not found, if you are using npu, ignore this.")
 import gc
 try:
     from flash_attn import flash_attn_with_kvcache
