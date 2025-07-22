@@ -45,7 +45,7 @@ KTRANSFORMERS_BUILD_XPU = torch.xpu.is_available()
 try:
     import torch_npu
     KTRANSFORMERS_BUILD_NPU = torch_npu.npu.is_available()
-except ModuleNotFoundError | ImportError as e:
+except:
     KTRANSFORMERS_BUILD_NPU = False
 
 # 检测 DEV_BACKEND 环境变量

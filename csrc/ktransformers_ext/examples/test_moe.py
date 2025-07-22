@@ -95,6 +95,8 @@ with torch.inference_mode(mode=True):
         input = torch.randn((qlen, hidden_size), dtype=torch.float16).contiguous()
         output = torch.empty((qlen, hidden_size), dtype=torch.float16).contiguous()
         input = input / 100
+
+        bsz_tensor = torch.tensor([qlen], dtype=torch.int32, device="cuda").to("cpu").contiguous()
         
         moe = moes[i % layer_num]
         CPUInfer.submit(
@@ -104,7 +106,8 @@ with torch.inference_mode(mode=True):
                 expert_ids.data_ptr(), 
                 weights.data_ptr(), 
                 input.data_ptr(), 
-                output.data_ptr()
+                output.data_ptr(),
+                bsz_tensor.data_ptr()
             )
         )
         CPUInfer.sync()
