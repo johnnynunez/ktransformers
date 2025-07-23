@@ -18,7 +18,15 @@ import itertools
 import copy
 from ktransformers.util import utils
 
+try:
+    import torch_npu
+    use_torch_npu = torch_npu.npu.is_available()
+except:
+    use_torch_npu = False
+
+
 def inject(module, local_optimization_dict, model_config:AutoConfig ,gguf_loader:GGUFLoader, prefix=''):
+
     for name, child in module._modules.items():
         if child is not None:
             child_prefix = prefix + name
@@ -124,9 +132,10 @@ def optimize_and_load_gguf(module: nn.Module, rule_file: str, gguf_path: str, mo
     
     model_config = translate_model_config(model_config)
 
-    if q4_gguf_path:
-        q4_gguf_loader = GGUFLoader(q4_gguf_path)
-        utils.Q4_GGUF_LODER = q4_gguf_loader
+    if use_torch_npu:
+        if q4_gguf_path:
+            q4_gguf_loader = GGUFLoader(q4_gguf_path)
+            utils.Q4_GGUF_LODER = q4_gguf_loader
         gguf_loader = GGUFLoader(gguf_path, getattr(model_config, "quantize", None))
         with torch.device("meta"):
             inject(module, optimize_config, model_config, gguf_loader)

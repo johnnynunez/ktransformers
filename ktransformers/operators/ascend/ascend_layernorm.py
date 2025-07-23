@@ -5,8 +5,8 @@ from transformers import PretrainedConfig
 
 from ktransformers.operators.base_operator import BaseInjectedModule
 from ktransformers.util import utils
-from ktransformers.util.custom_gguf import GGUFLoader
-
+from ktransformers.util.custom_loader import GGUFLoader
+from ktransformers.util.custom_loader import translate_name_to_gguf
 
 class KDeepseekV3RMSNormW8A8(BaseInjectedModule):
     def __init__(self,

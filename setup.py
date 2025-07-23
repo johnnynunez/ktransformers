@@ -186,6 +186,8 @@ class VersionInfo:
         else:
             print("Using native cpu instruct")
         if sys.platform.startswith("linux"):
+            if KTRANSFORMERS_BUILD_NPU:
+                return 'aarch64'
             with open('/proc/cpuinfo', 'r', encoding="utf-8") as cpu_f:
                 cpuinfo = cpu_f.read()
             flags_line = [line for line in cpuinfo.split(

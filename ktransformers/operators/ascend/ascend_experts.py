@@ -8,7 +8,7 @@ from transformers import PretrainedConfig
 
 from ktransformers.util.ascend.ascend_utils import get_tensor_parallel_size, get_tensor_parallel_group
 from ktransformers.operators.experts import KExpertsCPU, KTransformersExperts, EXPERTS_MAP, KDeepseekV3MoE, cuda_graphs
-from ktransformers.util.custom_gguf import GGUFLoader
+from ktransformers.util.custom_loader import GGUFLoader
 from ktransformers.util.utils import CUR_DEVICE, get_use_npu_graph, InferenceState
 
 

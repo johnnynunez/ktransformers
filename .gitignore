@@ -30,3 +30,4 @@ csrc/demo
 CMakeFiles
 kvc2/
 sched/
+build*/

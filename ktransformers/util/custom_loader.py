@@ -53,6 +53,7 @@ class SafeTensorLoader(ModelLoader):
     def __init__(self, file_path: str):
 
         self.__load_tensor_file_map(file_path)
+        # print(self.tensor_file_map)
 
     def __load_tensor_file_map(self, file_path: str):
         # 处理传入路径，确保是文件夹路径
@@ -96,6 +97,7 @@ class SafeTensorLoader(ModelLoader):
 
 
     def load_tensor(self, key: str, device: str="cpu"):
+
         if translate_name_to_gguf(key) in self.tensor_file_map:
             key = translate_name_to_gguf(key)
         elif key in self.tensor_file_map:
@@ -107,7 +109,7 @@ class SafeTensorLoader(ModelLoader):
         if f is None:
             raise FileNotFoundError(f"File {file} not found in Safetensor files")
         tensor = f.get_tensor(key)
-      
+
         return tensor.to(device)
 
     def load_experts(self, key: str, device: str="cpu"):
@@ -267,6 +269,7 @@ class SafeTensorLoader(ModelLoader):
 
 class W8A8SafeTensorLoader(SafeTensorLoader):
     def load_tensor(self, key: str, device: str = "cpu"):
+        key = translate_name_to_gguf(key)
         if key not in self.tensor_file_map:
             raise KeyError(f"Key {key} not found in Safetensor files")
         file = self.tensor_file_map[key]
@@ -308,13 +311,6 @@ class GGUFLoader(ModelLoader):
             gguf_path = os.path.dirname(gguf_path)
 
         safetensor_loader = SafeTensorLoader(gguf_path)
-        if quantize == "w8a8_dynamic":
-            safetensor_loader = W8A8SafeTensorLoader(gguf_path)
-        else:
-            safetensor_loader = SafeTensorLoader(gguf_path)
-        if safetensor_loader.tensor_file_map:
-            self.safetensor_loader = safetensor_loader
-            return
         
         self.tensor_info = {}
         self.gguf_path = gguf_path
@@ -322,6 +318,14 @@ class GGUFLoader(ModelLoader):
         self.file_data_map = {}
         self.gguf_file_meta = {}
         self.tensor_device_map = {}
+
+        if quantize == "w8a8_dynamic":
+            safetensor_loader = W8A8SafeTensorLoader(gguf_path)
+        else:
+            safetensor_loader = SafeTensorLoader(gguf_path)
+        if safetensor_loader.tensor_file_map:
+            self.safetensor_loader = safetensor_loader
+            return
 
         # Walk through all the .gguf files in the directory
         found_gguf = False
@@ -431,6 +435,7 @@ class GGUFLoader(ModelLoader):
         return mmap_data[offset : offset + itemsize * item_count]
 
     def get_undequanted_tensor_and_ggml_type(self, name):
+
         name = translate_name_to_gguf(name)
         t = self.tensor_info[name]
         data = self.get_mmap_tensor(name)
@@ -439,6 +444,7 @@ class GGUFLoader(ModelLoader):
         return data, ggml_type
 
     def load_expert_tensor(self, name, data, expert_id, elements_per_expert, device = "cuda", target_dtype = torch.get_default_dtype())->torch.Tensor:
+
         name = translate_name_to_gguf(name)
         t = self.tensor_info[name]
         shape = t["shape"]
@@ -468,6 +474,7 @@ class GGUFLoader(ModelLoader):
         return values
 
     def load_gguf_tensor(self, name: str, device:str = "cpu", target_dtype = None)->torch.Tensor:
+
         name = translate_name_to_gguf(name)
         t = self.tensor_info[name]
         if target_dtype == None:
@@ -533,10 +540,12 @@ class GGUFLoader(ModelLoader):
             .reshape(values.shape))
         return values
     def has_tensor(self, name: str):
+
         name = translate_name_to_gguf(name)
         return name in self.tensor_info
 
     def get_ggml_type(self, name: str):
+
         name = translate_name_to_gguf(name)
         if name not in self.tensor_info:
             raise KeyError(f"Key {name} not found in GGUF files")

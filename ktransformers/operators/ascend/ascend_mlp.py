@@ -49,6 +49,7 @@ class KDeepseekV3MLPW8A8A2V2(BaseInjectedModule, DeepseekV3MLP):
         original_dtype = x.dtype
         quant_out, dynamic_scale = torch_npu.npu_dynamic_quant(x)
         dynamic_scale = dynamic_scale.view(-1)
+
         gate_up_x = torch_npu.npu_quant_matmul(
             quant_out,
             self.orig_module.gate_proj.weight,

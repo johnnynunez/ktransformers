@@ -11,7 +11,7 @@ from transformers.cache_utils import Cache
 from ktransformers.models.modeling_deepseek import DeepseekV2Attention, apply_rotary_pos_emb
 from ktransformers.operators.base_operator import BaseInjectedModule
 from ktransformers.util.ascend.ascend_utils import get_tensor_parallel_size, allreduce_wrapper
-from ktransformers.util.custom_gguf import GGUFLoader
+from ktransformers.util.custom_loader import GGUFLoader
 from ktransformers.util.utils import get_compute_capability, get_use_npu_graph, CUR_DEVICE
 from ktransformers.util.vendors import device_manager, GPUVendor
 from ktransformers.util import utils

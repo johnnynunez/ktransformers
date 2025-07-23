@@ -148,10 +148,10 @@ def local_chat(
     logging.basicConfig(level=logging.INFO)
 
     system = platform.system()
-    if system == "Windows":
-        os.system("cls") if local_rank == 0 else None
-    else:
-        os.system("clear") if local_rank == 0 else None
+    # if system == "Windows":
+    #     os.system("cls") if local_rank == 0 else None
+    # else:
+    #     os.system("clear") if local_rank == 0 else None
 
     print(f"{model=}") if local_rank == 0 else None
 
